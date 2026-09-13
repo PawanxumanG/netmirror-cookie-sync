@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-NetMirror Cloud Cookie Sync
-Automatically runs on GitHub Actions schedule (every 6 hours)
-Performs ad verification on net52.cc and updates Firebase Realtime Database
+NetMirror Cloud Cookie Sync (High Reliability Edition)
+Runs automatically via GitHub Actions / local daemon to keep Firebase Realtime Database
+loaded with active, verified bypass cookies for NetMirror Android and Android TV APKs.
 """
 
 import urllib.request
@@ -13,19 +13,45 @@ import re
 import ssl
 import sys
 
+# Unbuffered output for real-time CI/CD logging
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, "reconfigure") else None
+
 FIREBASE_URL = "https://shinzoverseapk-default-rtdb.firebaseio.com/netmirror_cookie.json"
 UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 /OS.Gatu v3.0"
+APP_PKG = "app.netmirror.netmirrornew"
 
 def get_ssl_context():
     return ssl._create_unverified_context()
 
-def sync_cookie():
+def test_cookie_validity(cookie_str):
+    """Verify that the cookie actually bypasses the ad/abuse wall on net52.cc"""
     ctx = get_ssl_context()
-    print("[1/4] Fetching NetMirror mobile home page...")
+    req = urllib.request.Request("https://net52.cc/mobile/home?app=1", headers={
+        "User-Agent": UA,
+        "X-Requested-With": APP_PKG,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Cookie": cookie_str
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            if "data-addhash" not in html and len(html) > 5000:
+                print(f"[✓] Cookie validation passed! Verified clean response ({len(html)} bytes).")
+                return True
+            else:
+                print(f"[✗] Cookie validation failed: response still contains ad hash or is too short ({len(html)} bytes).")
+                return False
+    except Exception as e:
+        print(f"[!] Cookie validation error: {e}")
+        return False
+
+def sync_cookie_attempt():
+    ctx = get_ssl_context()
+    print("[1/4] Fetching NetMirror mobile home page to initiate verification session...")
     
     req = urllib.request.Request("https://net52.cc/mobile/home?app=1", headers={
         "User-Agent": UA,
-        "X-Requested-With": "app.netmirror.netmirrornew",
+        "X-Requested-With": APP_PKG,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     })
     
@@ -34,12 +60,12 @@ def sync_cookie():
             html = resp.read().decode("utf-8", errors="ignore")
     except Exception as e:
         print(f"[-] Failed to load home page: {e}")
-        return False
+        return None
 
     m = re.search(r'data-addhash=[\"\']([^\"\']+)[\"\']', html)
     if not m:
-        print("[!] No data-addhash found in page. Might already be verified.")
-        return False
+        print("[!] No data-addhash found in page. Checking if current session is already clean...")
+        return None
 
     addhash = m.group(1)
     print(f"[+] Got ad verification hash: {addhash}")
@@ -91,9 +117,14 @@ def sync_cookie():
 
     if not verified_cookie:
         print("[-] Failed to obtain verified cookie from verify2.php")
-        return False
+        return None
 
-    print(f"[+] Verified cookie: {verified_cookie}")
+    print(f"[+] Obtained verified cookie candidate: {verified_cookie}")
+    
+    # Test cookie against net52
+    if not test_cookie_validity(verified_cookie):
+        print("[-] Candidate cookie failed validity check.")
+        return None
 
     # Step 4: Push to Firebase
     print(f"[4/4] Pushing active cookie to Firebase: {FIREBASE_URL}...")
@@ -111,11 +142,25 @@ def sync_cookie():
     try:
         with urllib.request.urlopen(fb_req, timeout=15, context=ctx) as fb_resp:
             print(f"[+] Firebase updated successfully (HTTP {fb_resp.status})!")
-            return True
+            return verified_cookie
     except Exception as e:
         print(f"[-] Firebase update error: {e}")
-        return False
+        return None
+
+def main():
+    print(f"=== NetMirror Cloud Cookie Sync Starting @ {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} ===")
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        print(f"\n--- Sync Attempt {attempt}/{max_retries} ---")
+        cookie = sync_cookie_attempt()
+        if cookie:
+            print(f"\n[SUCCESS] Active bypass cookie synced to Cloud Firebase: {cookie}")
+            sys.exit(0)
+        print(f"[!] Attempt {attempt} failed, waiting 5 seconds before retry...")
+        time.sleep(5)
+    
+    print("\n[ERROR] All sync attempts failed.")
+    sys.exit(1)
 
 if __name__ == "__main__":
-    success = sync_cookie()
-    sys.exit(0 if success else 1)
+    main()
