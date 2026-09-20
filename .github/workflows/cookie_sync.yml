@@ -2,12 +2,15 @@ name: NetMirror High-Frequency Cookie Sync
 
 on:
   schedule:
-    # Runs automatically every 1 hour so cloud cookie in Firebase is always fresh
-    - cron: '0 * * * *'
+    # Runs automatically every 30 minutes so cloud cookie in Firebase is ALWAYS fresh
+    - cron: '*/30 * * * *'
   workflow_dispatch: # Allows manual trigger from GitHub Web UI
   push:
     branches:
       - main
+
+permissions:
+  contents: write
 
 concurrency:
   group: cookie-sync
@@ -20,6 +23,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,8 +38,9 @@ jobs:
       - name: Update Timestamp & Prevent Workflow Inactivity Pause
         run: |
           date -u +"%Y-%m-%d %H:%M:%S UTC" > last_sync.txt
-          git config --global user.name "NetMirror Sync Bot"
-          git config --global user.email "bot@netmirror.internal"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add last_sync.txt
           git commit -m "Auto-sync update [skip ci]" || echo "No changes to commit"
-          git push || echo "Push skipped or unauthenticated"
+          git push || echo "Push skipped"
+
