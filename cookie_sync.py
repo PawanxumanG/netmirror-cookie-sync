@@ -126,7 +126,7 @@ def sync_cookie_attempt():
         print("[-] Candidate cookie failed validity check.")
         return None
 
-    # Step 4: Push to Firebase
+    # Step 4: Push to Firebase (both Mobile and TV endpoints)
     print(f"[4/4] Pushing active cookie to Firebase: {FIREBASE_URL}...")
     payload = {
         "cookie": verified_cookie,
@@ -141,11 +141,32 @@ def sync_cookie_attempt():
 
     try:
         with urllib.request.urlopen(fb_req, timeout=15, context=ctx) as fb_resp:
-            print(f"[+] Firebase updated successfully (HTTP {fb_resp.status})!")
-            return verified_cookie
+            print(f"[+] Firebase Mobile Cookie updated successfully (HTTP {fb_resp.status})!")
     except Exception as e:
-        print(f"[-] Firebase update error: {e}")
+        print(f"[-] Firebase Mobile update error: {e}")
         return None
+
+    # Step 5: Push TV Usertoken to Firebase for TV APK
+    try:
+        raw_val = verified_cookie.split("t_hash_t=")[1].split(";")[0].strip() if "t_hash_t=" in verified_cookie else verified_cookie
+        unquoted = urllib.parse.unquote(raw_val)
+        parts = unquoted.split("::")
+        tv_token = "::".join(parts[:4])
+        
+        tv_url = "https://shinzoverseapk-default-rtdb.firebaseio.com/netmirror_tv_token.json"
+        tv_payload = {
+            "usertoken": tv_token,
+            "updated_at": int(time.time()),
+            "updated_at_readable": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        }
+        tv_req = urllib.request.Request(tv_url, data=json.dumps(tv_payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        tv_req.get_method = lambda: "PUT"
+        with urllib.request.urlopen(tv_req, timeout=15, context=ctx) as tv_resp:
+            print(f"[+] Firebase TV Usertoken ({tv_token}) updated successfully (HTTP {tv_resp.status})!")
+    except Exception as e:
+        print(f"[-] Firebase TV update warning: {e}")
+
+    return verified_cookie
 
 def main():
     print(f"=== NetMirror Cloud Cookie Sync Starting @ {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} ===")
