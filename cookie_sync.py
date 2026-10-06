@@ -170,18 +170,45 @@ def sync_cookie_attempt():
 
 def main():
     print(f"=== NetMirror Cloud Cookie Sync Starting @ {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} ===")
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        print(f"\n--- Sync Attempt {attempt}/{max_retries} ---")
-        cookie = sync_cookie_attempt()
-        if cookie:
-            print(f"\n[SUCCESS] Active bypass cookie synced to Cloud Firebase: {cookie}")
-            sys.exit(0)
-        print(f"[!] Attempt {attempt} failed, waiting 5 seconds before retry...")
-        time.sleep(5)
     
-    print("\n[ERROR] All sync attempts failed.")
-    sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--loop", type=int, default=0, help="Total minutes to keep syncing periodically in this runner")
+    parser.add_argument("--interval", type=int, default=15, help="Minutes between sync iterations in loop mode")
+    args, _ = parser.parse_known_args()
+
+    loop_duration_sec = args.loop * 60
+    interval_sec = args.interval * 60
+    start_time = time.time()
+
+    iteration = 1
+    while True:
+        print(f"\n=================== Sync Iteration #{iteration} @ {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} ===================")
+        max_retries = 3
+        success = False
+        for attempt in range(1, max_retries + 1):
+            print(f"--- Attempt {attempt}/{max_retries} ---")
+            cookie = sync_cookie_attempt()
+            if cookie:
+                print(f"[SUCCESS] Active bypass cookie synced to Cloud Firebase: {cookie}")
+                success = True
+                break
+            print(f"[!] Attempt {attempt} failed, waiting 5 seconds before retry...")
+            time.sleep(5)
+            
+        if not success:
+            print("[WARN] Sync iteration failed.")
+            
+        elapsed = time.time() - start_time
+        if loop_duration_sec > 0 and (elapsed + interval_sec) < loop_duration_sec:
+            print(f"\n[SLEEP] Keeping runner alive: Next sync in {args.interval} minutes ({elapsed/60:.1f}m / {args.loop}m total elapsed)...")
+            time.sleep(interval_sec)
+            iteration += 1
+        else:
+            break
+
+    print(f"\n=== NetMirror Cloud Cookie Sync Finished Cleanly @ {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} ===")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
