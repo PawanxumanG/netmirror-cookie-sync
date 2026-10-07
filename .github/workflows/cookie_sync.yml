@@ -1,10 +1,9 @@
-name: NetMirror High-Frequency Cookie Sync
+name: NetMirror 3-Hour Cookie & Token Sync
 
 on:
   schedule:
-    # Staggered odd-minute schedules to avoid GitHub Actions peak queue delays
-    - cron: '12,42 * * * *'
-    - cron: '27,57 * * * *'
+    # Runs automatically every 3 hours (using minute 15 to avoid GitHub peak rush-hour delays)
+    - cron: '15 */3 * * *'
   workflow_dispatch: # Allows manual trigger from GitHub Web UI
   push:
     branches:
@@ -20,7 +19,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,11 +31,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Run Continuous Cookie Sync to Firebase (Active Cloud Loop)
+      - name: Run Cookie & TV Token Sync to Firebase
         run: |
-          python -u cookie_sync.py --loop 45 --interval 15
+          python -u cookie_sync.py
 
-      - name: Update Timestamp & Prevent Workflow Inactivity Pause
+      - name: Update Timestamp & Prevent Inactivity Pause
         if: always()
         run: |
           date -u +"%Y-%m-%d %H:%M:%S UTC" > last_sync.txt
@@ -45,5 +44,6 @@ jobs:
           git add last_sync.txt
           git commit -m "Auto-sync update [skip ci]" || echo "No changes to commit"
           git push || echo "Push skipped"
+
 
 
