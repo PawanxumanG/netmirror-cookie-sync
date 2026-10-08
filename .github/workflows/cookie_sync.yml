@@ -1,9 +1,9 @@
-name: NetMirror 3-Hour Cookie & Token Sync
+name: NetMirror 2-Hour Cookie & Token Sync
 
 on:
   schedule:
-    # Runs automatically every 3 hours (using minute 15 to avoid GitHub peak rush-hour delays)
-    - cron: '15 */3 * * *'
+    # Runs automatically every 2 hours (at minute 5 to avoid GitHub peak hour congestion)
+    - cron: '5 */2 * * *'
   workflow_dispatch: # Allows manual trigger from GitHub Web UI
   push:
     branches:
