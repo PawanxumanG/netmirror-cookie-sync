@@ -3,6 +3,7 @@
 NetMirror Cloud Cookie Sync (High Reliability Edition)
 Runs automatically via GitHub Actions / local daemon to keep Firebase Realtime Database
 loaded with active, verified bypass cookies for NetMirror Android and Android TV APKs.
+Uses dynamic parameter extraction and browser automation to bypass Cloudflare protection.
 """
 
 import urllib.request
@@ -12,11 +13,14 @@ import json
 import re
 import ssl
 import sys
+import os
+import subprocess
 
 # Unbuffered output for real-time CI/CD logging
 sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, "reconfigure") else None
 
 FIREBASE_URL = "https://shinzoverseapk-default-rtdb.firebaseio.com/netmirror_cookie.json"
+TV_FIREBASE_URL = "https://shinzoverseapk-default-rtdb.firebaseio.com/netmirror_tv_token.json"
 UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 /OS.Gatu v3.0"
 APP_PKG = "app.netmirror.netmirrornew"
 
@@ -45,6 +49,81 @@ def test_cookie_validity(cookie_str):
         print(f"[!] Cookie validation error: {e}")
         return False
 
+def register_click_via_browser(userver_url):
+    """
+    Register the ad click using a real browser to pass Cloudflare Turnstile.
+    Supports native macOS Chrome and Linux/CI xvfb Playwright GUI automation.
+    """
+    print("[*] Attempting browser-based ad click registration to pass Cloudflare...")
+
+    # Strategy 1: System browser (on macOS desktop)
+    if sys.platform == "darwin":
+        try:
+            print("[*] Opening URL via macOS Chrome...")
+            subprocess.run(["open", "-a", "Google Chrome", userver_url], check=True)
+            time.sleep(6)
+            return True
+        except Exception as e:
+            print(f"[-] macOS Chrome open warning: {e}")
+
+    # Strategy 2: Playwright with Chromium (supports xvfb-run on Linux CI)
+    try:
+        from playwright.sync_api import sync_playwright
+        
+        is_linux = sys.platform.startswith("linux")
+        has_display = bool(os.environ.get("DISPLAY"))
+        # In xvfb-run on Linux, headless=False runs inside the virtual display as a real GUI browser
+        use_headless = not (is_linux and has_display)
+
+        print(f"[*] Launching Playwright browser (headless={use_headless}, linux_display={has_display})...")
+        with sync_playwright() as p:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage"
+            ]
+            
+            browser = None
+            try:
+                browser = p.chromium.launch(headless=use_headless, channel="chrome" if is_linux else None, args=launch_args)
+            except Exception:
+                browser = p.chromium.launch(headless=use_headless, args=launch_args)
+
+            context = browser.new_context()
+            page = context.new_page()
+            
+            try:
+                from playwright_stealth import Stealth
+                Stealth().apply_stealth_sync(page)
+            except Exception:
+                pass
+
+            print(f"[*] Navigating to {userver_url}...")
+            try:
+                page.goto(userver_url, wait_until="commit", timeout=15000)
+            except Exception:
+                pass
+
+            for sec in range(15):
+                time.sleep(1)
+                try:
+                    title = page.title()
+                    if "Just a moment" not in title and len(title) > 0:
+                        print(f"[✓] Cloudflare challenge passed in {sec+1}s! Title: {title}")
+                        time.sleep(2)
+                        break
+                except Exception:
+                    pass
+
+            browser.close()
+            print("[+] Playwright click registration step completed.")
+            return True
+    except Exception as e:
+        print(f"[-] Playwright browser error: {e}")
+
+    return False
+
 def sync_cookie_attempt():
     ctx = get_ssl_context()
     print("[1/4] Fetching NetMirror mobile home page to initiate verification session...")
@@ -70,19 +149,36 @@ def sync_cookie_attempt():
     addhash = m.group(1)
     print(f"[+] Got ad verification hash: {addhash}")
 
+    # Dynamically extract Vsite2 and Qury from page script
+    vsite_m = re.search(r'var\s+Vsite2\s*=\s*[\"\']([^\"\']+)[\"\']', html)
+    vsite = vsite_m.group(1).strip() if vsite_m else "userver"
+
+    qury_m = re.search(r'var\s+Qury\s*=\s*[\"\']([^\"\']+)[\"\']', html)
+    if qury_m:
+        qury = qury_m.group(1).strip()
+    else:
+        open_match = re.search(r'[\'"][?]([a-zA-Z0-9_-]+)=', html)
+        qury = open_match.group(1).strip() if open_match else "ffr455"
+
+    print(f"[+] Extracted endpoint config: Vsite='{vsite}', Qury='{qury}'")
+
     # Step 2: Register click with userver
     print("[2/4] Registering ad click with userver...")
-    userver_url = f"https://userver.net52.cc/?hee5={urllib.parse.quote(addhash)}&a=y&t={time.time()}"
+    userver_url = f"https://{vsite}.net52.cc/?{qury}={urllib.parse.quote(addhash)}&a=y&t={time.time()}"
+
+    # Try fast HTTP GET first
+    fast_ping_ok = False
     req2 = urllib.request.Request(userver_url, headers={
         "User-Agent": UA,
         "Referer": "https://net52.cc/"
     })
-    
     try:
-        with urllib.request.urlopen(req2, timeout=15, context=ctx) as resp2:
-            print(f"[+] Userver response status: {resp2.status}")
+        with urllib.request.urlopen(req2, timeout=10, context=ctx) as resp2:
+            print(f"[+] Fast Userver response status: {resp2.status}")
+            fast_ping_ok = True
     except Exception as e:
-        print(f"[-] Userver ping error: {e}")
+        print(f"[-] Direct Userver ping returned ({e}). Switching to browser-based bypass...")
+        register_click_via_browser(userver_url)
 
     # Step 3: Poll verify2.php until "All Done" (server timer ~35s)
     print("[3/4] Polling verify2.php until verified...")
@@ -153,13 +249,12 @@ def sync_cookie_attempt():
         parts = unquoted.split("::")
         tv_token = "::".join(parts[:4])
         
-        tv_url = "https://shinzoverseapk-default-rtdb.firebaseio.com/netmirror_tv_token.json"
         tv_payload = {
             "usertoken": tv_token,
             "updated_at": int(time.time()),
             "updated_at_readable": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
         }
-        tv_req = urllib.request.Request(tv_url, data=json.dumps(tv_payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        tv_req = urllib.request.Request(TV_FIREBASE_URL, data=json.dumps(tv_payload).encode("utf-8"), headers={"Content-Type": "application/json"})
         tv_req.get_method = lambda: "PUT"
         with urllib.request.urlopen(tv_req, timeout=15, context=ctx) as tv_resp:
             print(f"[+] Firebase TV Usertoken ({tv_token}) updated successfully (HTTP {tv_resp.status})!")
