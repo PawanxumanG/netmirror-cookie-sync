@@ -19,7 +19,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,15 +31,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Playwright & Automation Tools
-        run: |
-          pip install --upgrade pip
-          pip install playwright playwright-stealth
-          playwright install chromium --with-deps
-
       - name: Run Cookie & TV Token Sync to Firebase
         run: |
-          xvfb-run -a python -u cookie_sync.py
+          python -u cookie_sync.py
 
       - name: Update Timestamp & Prevent Inactivity Pause
         if: always()
