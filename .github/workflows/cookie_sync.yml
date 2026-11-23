@@ -19,7 +19,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,12 +31,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Run Cookie & TV Token Sync to Firebase
+      - name: Install Dependencies & Playwright
         run: |
-          python -u cookie_sync.py
+          python -m pip install --upgrade pip
+          pip install playwright playwright-stealth
+          playwright install --with-deps chromium
+
+      - name: Run Cookie & TV Token Sync with Virtual Display
+        run: |
+          sudo apt-get install -y xvfb
+          xvfb-run --auto-servernum python -u cookie_sync.py
 
       - name: Update Timestamp & Prevent Inactivity Pause
-        if: always()
+        if: success()
         run: |
           date -u +"%Y-%m-%d %H:%M:%S UTC" > last_sync.txt
           git config --global user.name "github-actions[bot]"
