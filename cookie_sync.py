@@ -284,6 +284,8 @@ def check_existing_firebase_cookie(max_age_hours=4.0):
                 print(f"[✓] Active Firebase token confirmed: {cookie[:35]}... (age: {age_hours:.1f}h).")
                 print(f"[✓] Token is fresh (< {max_age_hours}h) and operational. No re-verification required.")
                 return True
+            else:
+                print(f"[!] Token in Firebase is {age_hours:.1f} hours old (threshold is {max_age_hours}h). Needs refresh.")
     except Exception as e:
         print(f"[-] Could not pre-check Firebase cookie: {e}")
     return False
@@ -315,10 +317,16 @@ def main():
         with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         fallback_cookie = data.get("cookie", "")
+        updated_at = data.get("updated_at", 0)
+        age_hours = (time.time() - updated_at) / 3600.0 if updated_at else 999.0
+
         if fallback_cookie and "t_hash_t=" in fallback_cookie:
-            print(f"\n[✓] FALLBACK ACTIVE: Existing token ({fallback_cookie[:35]}...) is preserved in Firebase.")
-            print("[✓] Service continues uninterrupted without downtime.")
-            sys.exit(0)
+            if age_hours < 8.0:
+                print(f"\n[✓] FALLBACK ACTIVE: Existing token ({fallback_cookie[:35]}...) is {age_hours:.1f}h old (< 8.0h threshold). Preserving in Firebase.")
+                print("[✓] Service continues uninterrupted without downtime.")
+                sys.exit(0)
+            else:
+                print(f"\n[✗] CRITICAL: Existing token is stale and expired ({age_hours:.1f}h old). Fallback rejected.")
     except Exception as e:
         print(f"[-] Fallback check error: {e}")
 
